@@ -1,0 +1,94 @@
+---
+title: "PredictiveModeling_WaterAccess"
+author: "Jeff Grayum"
+date: "6/8/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggthemes)
+
+
+library(knitr)
+knitr::opts_chunk$set(cache = TRUE, cache.lazy = FALSE, warning = FALSE, 
+                      message = FALSE, echo = TRUE, dpi = 180, 
+                      fig.width = 8, fig.height = 5)
+theme_set(theme_minimal())
+update_geom_defaults("rect", list(fill = "midnightblue", alpha = 0.8))
+```
+
+
+```{r}
+tuesdata <- tidytuesdayR::tt_load('2021-05-04')
+water_row <- tuesdata$water
+```
+
+We are going to try and build a model to predict whether water is available at a given source.
+```{r}
+water_row %>%
+  count(status_id, sort = TRUE)
+#We are going to exclude the Unknown status_id
+
+water_row %>%
+  count(water_source, sort = TRUE)
+#There is a lot of missing data in this dataset.
+```
+
+First, let's make a quick map.  Just to see what's up.
+```{r}
+water_row %>%
+  filter(status_id %in% c("y", "n")) %>%
+  ggplot(aes(lon_deg, lat_deg, color = status_id)) +
+  geom_point(alpha = 0.2)
+#This is a lot of data.  Let's look at only a single country.  Good Ol' Sierra Leone.
+
+water_row %>%
+  filter(country_name == "Sierra Leone",
+         status_id %in% c("y", "n"),
+         lon_deg < -5,
+         lat_deg < 15) %>%
+  ggplot(aes(lon_deg, lat_deg, color = status_id)) +
+  geom_point(alpha = 0.2) +
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Status", 
+       title = "Water sources in Sierra Leone") +
+  coord_fixed() +
+  guides(color = guide_legend(override.aes = list(alpha = 1)))
+```
+
+
+```{r}
+water <- water_row %>%
+  filter(country_name == "Sierra Leone",
+         status_id %in% c("y", "n"),
+         lon_deg < -5,
+         lat_deg < 15) %>%
+  mutate(pay = case_when(str_detect(pay, "^No") ~"no",  #Cool str_detect trick
+                         str_detect(pay, "^Yes") ~"yes",
+                         is.na(pay) ~ pay,
+                         TRUE ~ "it's complicated")) %>%
+  select(-country_name, -status, -report_date) %>%
+  mutate_if(is.character, as.factor) #To model, we must convert our characters to factors.
+```
+
+```{r}
+water %>%
+  ggplot(aes(install_year, y = ..density.., fill = status_id)) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  labs(fill = "Water available?")
+
+water %>%
+  ggplot(aes(y = pay, fill = status_id)) +
+  geom_bar(position = "fill") + #Allows us to look at %'s
+  labs(fill = "Water available?")
+
+```
+
