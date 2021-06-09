@@ -13,9 +13,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(tidyverse)
+library(tidymodels)
+#install.packages("usemodels")
+library(usemodels)
+#install.packages("tune")
+#install.packages("ranger")
+#install.packages("themis")
+library(themis)
+library(recipes)
+library(ranger)
 library(ggthemes)
-
-
 library(knitr)
 knitr::opts_chunk$set(cache = TRUE, cache.lazy = FALSE, warning = FALSE, 
                       message = FALSE, echo = TRUE, dpi = 180, 
@@ -23,8 +30,12 @@ knitr::opts_chunk$set(cache = TRUE, cache.lazy = FALSE, warning = FALSE,
 theme_set(theme_minimal())
 update_geom_defaults("rect", list(fill = "midnightblue", alpha = 0.8))
 ```
+OK, when you get the below error message when using a new package, you must update a *different* package for the new one to function...  Update the package on the third line, in single quotes ('tune').
 
-
+Error: package or namespace load failed for ‘usemodels’ in loadNamespace(i, c(lib.loc, .libPaths()), versionCheck = vI[[i]]):
+ namespace ‘tune’ 0.1.1 is already loaded, but >= 0.1.2 is required
+ 
+ 
 ```{r}
 tuesdata <- tidytuesdayR::tt_load('2021-05-04')
 water_row <- tuesdata$water
@@ -89,6 +100,81 @@ water %>%
   ggplot(aes(y = pay, fill = status_id)) +
   geom_bar(position = "fill") + #Allows us to look at %'s
   labs(fill = "Water available?")
+
+```
+
+Time to build the model!  Set seed, split, train split, test split.
+```{r}
+#First, let's set up our spending our data budget (wtf?)
+
+set.seed(123)
+
+water_split <- initial_split(water, strata = status_id) #Strata = what we're trying to predict!
+
+water_train <- training(water_split)
+
+water_test <- testing(water_split)
+
+#Use training data in resampling!
+set.seed(234)
+water_folds <- vfold_cv(water_train, strata = status_id) 
+water_folds
+
+#Above is "spending our data budget".  Nice.
+```
+Ok, so table below is our resamples (water_folds).  In each resample, we have some data that we're going to use for analysis left(37k), and some that we're going to use for assessment (right, 4.1k)  
+
+A tibble: 10 x 2
+   splits             id    
+   <list>             <chr> 
+ 1 <split [37K/4.1K]> Fold01
+ 2 <split [37K/4.1K]> Fold02
+ 3 <split [37K/4.1K]> Fold03
+ 4 <split [37K/4.1K]> Fold04
+ 5 <split [37K/4.1K]> Fold05
+ 6 <split [37K/4.1K]> Fold06
+ 7 <split [37K/4.1K]> Fold07
+ 8 <split [37K/4.1K]> Fold08
+ 9 <split [37K/4.1K]> Fold09
+10 <split [37K/4.1K]> Fold10
+
+
+We will fit this using a fairly simple model, the Ranger Random Forest Model.  No tuning required!  We have enough trees. " . " means "use everything".  So, we're explaining status_id by all other variables in our dataset.
+
+```{r}
+usemodels::use_ranger(status_id ~ ., data = water_train)
+
+#Below, we're just copying and pasting the output from above! Then, making some small changes. step_unknow assings a missing value to unknown
+
+#Below is our recipe for pre-processing and feature engineering.
+ranger_recipe <- 
+  recipe(formula = status_id ~ ., data = water_train) %>%
+  update_role(row_id, new_role = "id") %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_other(all_nominal_predictors(), threshold = 0.03) %>%
+  step_impute_linear(install_year) %>%
+  step_downsample(status_id)
+  
+
+#Random forest model specification
+ranger_spec <- 
+  rand_forest(trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger") 
+
+#Added both the feature engineering recipe and model specification to a workflow.
+ranger_workflow <- 
+  workflow() %>% 
+  add_recipe(ranger_recipe) %>% 
+  add_model(ranger_spec) 
+
+doParallel::registerDoParallel()
+set.seed(74403)
+#Now we fit our workflow to our folds.
+ranger_tune <- 
+  fit_resamples(ranger_workflow, 
+                         resamples = water_folds,
+                         control = control_resamples(save_pred = TRUE))
 
 ```
 
